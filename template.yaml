@@ -1,0 +1,100 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Query Orion API and save data to S3
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 20
+
+Resources:
+
+  ## Creating Lambda role for deployment
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-LambdaRole"
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        #Very Board Access Policies, this needs to refined to just specific requirements
+        - PolicyName: !Sub "${AWS::StackName}-LambdaPolicy"
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Sid: BucketAccess
+                Effect: Allow
+                Action:
+                  - "s3:PutObject"
+                  - "s3:CreateBucket"
+                Resource:
+                  - "arn:aws:s3:::<aws-bucket>/*"
+                  - "arn:aws:s3:::<aws bucket>"
+              - Sid: LoggingAccess
+                Effect: Allow
+                Action:
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                  - "logs:CreateLogGroup"
+                Resource: "*"
+
+  OrionAPI:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: app/
+      Handler: orion.lambda_handler
+      Runtime: python3.7
+      Role: !GetAtt LambdaRole.Arn
+      Environment:
+        Variables:
+          #Log Level for Cloudwatch Logs
+          LOG_LEVEL: info
+          ORION_SERVER: <orion-ott-server-url>
+          ORION_SERVER_USER: <username>
+          ORION_SERVER_PASS: <password>
+          DESTINATION_BUCKET: <aws bucket>
+      Tags:
+        purpose: "Query Orion API and save data to S3"
+        built-by: ""
+        stage: ""
+        team: ""
+
+  # Creating the Cron Job
+  # https://stackoverflow.com/questions/53942059/cloudformation-awseventsrule-encountered-unsupported-property-id
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-events-rule.html
+  # https://stackoverflow.com/questions/52208700/creating-a-target-for-a-cloudwatch-event-rule-via-cloudformation-for-a-fargate
+  hourly:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Create the Rule to run hourly"
+      ScheduleExpression: "cron(0 * * * ? *)"  # hourly
+      State: "ENABLED"
+      Targets:
+        - Arn: !GetAtt OrionAPI.Arn
+          Id: "TargetFunctionV1" # No idea why this is needed, but it is!
+
+  PermissionForEventsToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt OrionAPI.Arn
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt hourly.Arn
+
+
+
+Outputs:
+  OrionAPI:
+    Description: "Function ARN"
+    Value: !GetAtt OrionAPI.Arn
+  OrionAPIIamRole:
+    Description: "IAM Role created for Orion API lambda"
+    Value: !GetAtt LambdaRole.Arn
